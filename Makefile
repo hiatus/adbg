@@ -1,6 +1,6 @@
 TARGET := adbg-test
 CWARNS := -Wall
-CFLAGS := -std=gnu99 -DDEBUG
+CFLAGS := -std=gnu99
 
 all: $(TARGET)
 
