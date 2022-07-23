@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <sys/ptrace.h>
 
-// Check if string matches any of various debugging tools names
+// Check if a string matches the name of a known debugging tool
 static inline bool _is_tool_name(const char *s)
 {
 	return (
@@ -17,7 +17,7 @@ static inline bool _is_tool_name(const char *s)
 	);
 }
 
-// Try to detect environment-related debugging signs
+// Try to detect environment-related signs of debugging
 bool adbg_env(void)
 {
 	char *s, path[64];
@@ -61,7 +61,7 @@ bool adbg_env(void)
 	return false;
 }
 
-// Try to detect GDB
+// Try to detect GDB via SIGTRAP
 static bool _gdb_present;
 
 static void _gdb_sigtrap_handler(int sig)
