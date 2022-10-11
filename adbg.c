@@ -66,7 +66,8 @@ static bool _gdb_present;
 
 static void _gdb_sigtrap_handler(int sig)
 {
-	_gdb_present = false;
+	if (sig == SIGTRAP)
+		_gdb_present = false;
 }
 
 bool adbg_gdb(void)
