@@ -16,4 +16,4 @@ Testing
 -------
 The test routine simply returns from `adbg_check_all()`, which wraps all functions. To enable debugging messages of failed tests, pass `-DDEBUG` to the compiler.
 
-- Build the test binary with `make` and run it in different debugging such as `strace`, `gdb`, `radare2`, etc. If the process returns 1, debugging behaviour was detected.
+- Build the test binary `adbg-test` with `make` and run it using different debugging tools such as `strace`, `gdb`, `radare2`, etc. If the process returns 1, debugging behaviour was detected.
