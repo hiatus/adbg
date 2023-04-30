@@ -1,16 +1,16 @@
 #ifndef ADBG_H
 #define ADBG_H
 
-#include <stdbool.h>
-
-// Wrapper for all functions
-bool adbg_all(void);
-// Try to detect environment-related debugging signs
-bool adbg_env(void);
-// Try to detect GDB
-bool adbg_gdb(void);
-// Try to detect debugging tools via information under /proc/${PID}
-bool adbg_proc(void);
-// Try to detect if the current process has a tracer
-bool adbg_ptrace(void);
+// Detect LD_PRELOAD techniques
+int adbg_check_ldpreload(void);
+// Detect GDB fingerprints
+int adbg_check_gdb(void);
+// Detect debugging tools via procfs
+int adbg_check_parent(void);
+// Detect SIGTRAP handling
+int adbg_check_sigtrap(void);
+// Check if the current process has a tracer
+int adbg_check_ptrace(void);
+// Wrapper for all functions above
+int adbg_check_all(void);
 #endif

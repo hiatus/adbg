@@ -1,15 +1,19 @@
-#include "adbg.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
-#include <stdbool.h>
 #include <sys/ptrace.h>
 
+#include "adbg.h"
+
+
+// Detect debuggers via SIGTRAP handling
+static int _debugger_present;
+
+
 // Check if a string matches the name of a known debugging tool
-static inline bool _is_tool_name(const char *s)
+static int _is_tool_name(const char *s)
 {
 	return (
 		strstr(s, "gdb")   || strstr(s, "r2")     || strstr(s, "radare2") ||
@@ -17,33 +21,43 @@ static inline bool _is_tool_name(const char *s)
 	);
 }
 
-// Try to detect environment-related signs of debugging
-bool adbg_env(void)
+// Detect LD_PRELOAD techniques
+int adbg_check_ldpreload(void)
 {
-	char *s, path[64];
-
 	// Check if LD_PRELOAD is set
 	if (getenv("LD_PRELOAD")) {
-#ifdef DEBUG
-		fputs("adbg_env: LD_PRELOAD is set\n", stderr);
-#endif
-		return true;
+		#ifdef DEBUG
+		fputs("adbg_check_ldpreload: LD_PRELOAD is set\n", stderr);
+		#endif
+
+		return 1;
 	}
 
-	// Check for a custom getenv implementation
+	// Check for a custom getenv implementation by setting LD_PRELOAD and
+	// checking whether it actually changed changed or not
 	putenv("LD_PRELOAD=foo");
 
 	if (strcmp(getenv("LD_PRELOAD"), "foo")) {
 		unsetenv("LD_PRELOAD");
-#ifdef DEBUG
-		fputs("adbg_env: custom getenv implementation\n", stderr);
-#endif
-		return true;
+
+		#ifdef DEBUG
+		fputs("adbg_check_ldpreload: custom getenv detected\n", stderr);
+		#endif
+
+		return 1;
 	}
 
 	unsetenv("LD_PRELOAD");
-	
-	// Check for GDB path
+	return 0;
+}
+
+// Detect GDB fingerprints
+int adbg_check_gdb(void)
+{
+	FILE *fp;
+	char *s, path[1024];
+
+	// Check for GDB path in _
 	if (getenv("_")) {
 		strncpy(path, getenv("_"), sizeof(path) - 1);
 
@@ -51,71 +65,43 @@ bool adbg_env(void)
 		s = s ? s + 1 : path;
 
 		if (! strcmp(s, "gdb")) {
-#ifdef DEBUG
-			fputs("adbg_env: getenv('_') contains GDB PATH\n", stderr);
-#endif
-			return true;
+			#ifdef DEBUG
+			fputs("adbg_check_gdb: environment variable _ contains 'gdb'\n", stderr);
+			#endif
+
+			return 1;
 		}
 	}
 
-	return false;
-}
-
-// Try to detect GDB via SIGTRAP
-static bool _gdb_present;
-
-static void _gdb_sigtrap_handler(int sig)
-{
-	if (sig == SIGTRAP)
-		_gdb_present = false;
-}
-
-bool adbg_gdb(void)
-{
-	FILE *fp;
-
 	// GDB sets LINES and COLUMNS
 	if (getenv("LINES") || getenv("COLUMNS")) {
-#ifdef DEBUG
-		fputs("adbg_gdb: environment variables LINES and/or COLUMNS found\n", stderr);
-#endif
-		return true;
+		#ifdef DEBUG
+		fputs("adbg_check_gdb: GDB detected via LINES and/or COLUMNS\n", stderr);
+		#endif
+
+		return 1;
 	}
 
 	// GDB leaks 2 file descriptors when it opens a program to be debugged.
 	// Both file descriptors are pointing to the file being debugged.
 	if ((fp = fopen("/", "r"))) {
 		if (fileno(fp) > 3) {
-#ifdef DEBUG
-			fputs("adbg_gdb: new file descriptor number greater than 3", stderr);
-#endif
+			#ifdef DEBUG
+			fputs("adbg_check_gdb: GDB detected via file descriptor count\n", stderr);
+			#endif
+
 			fclose(fp);
-			return true;
+			return 1;
 		}
 
 		fclose(fp);
 	}
 
-	// Knowing that GDB handles SIGTRAP, if raised, _gdb_sigtrap_handler()
-	// would not be triggered
-	_gdb_present = true;
-	signal(SIGTRAP, _gdb_sigtrap_handler);
-
-	if (! raise(SIGTRAP) && _gdb_present) {
-		#ifdef DEBUG
-			fputs("adbg_gdb: SIGTRAP possibly being handled by GDB\n", stderr);
-		#endif
-
-		return true;
-	}
-
-	signal(SIGTRAP, SIG_DFL);
-
-	return false;
+	return 0;
 }
 
-// Try to detect debugging tools via information under /proc/${PID}
-bool adbg_proc(void)
+// Detect debugging tools via procfs
+int adbg_check_parent(void)
 {
 	FILE *fp;
 
@@ -131,11 +117,15 @@ bool adbg_proc(void)
 			s = s ? s + 1 : buffer;
 
 			if (_is_tool_name(s)) {
+				#ifdef DEBUG
+				fputs(
+					"adbg_check_parent: "
+					"parent process is a debugging tool\n", stderr
+				);
+				#endif
+
 				fclose(fp);
-#ifdef DEBUG
-				fputs("adbg_proc: /proc/PID/status contains known debugging tool name\n", stderr);
-#endif
-				return true;
+				return 1;
 			}
 
 		}
@@ -146,53 +136,93 @@ bool adbg_proc(void)
 	// Check parent name in /proc/${PID}/cmdline
 	snprintf(buffer, sizeof(buffer), "/proc/%i/cmdline", getppid());
 
-	if (! (fp = fopen(buffer, "r")))
-		return false;
+	if (! (fp = fopen(buffer, "r"))) {
+		#ifdef DEBUG
+		perror("fopen");
+		fprintf(stderr, "adbg_check_parent: failed to open '%s'; skipping other checks", buffer);
+		#endif
+
+		return 0;
+	}
 
 	if (fgets(buffer, sizeof(buffer), fp)) {
 		s = strrchr(buffer, '/');
 		s = s ? s + 1 : buffer;
 
 		if (_is_tool_name(s)) {
+			#ifdef DEBUG
+			fputs("adbg_check_parent: parent process is a debugging tool\n", stderr);
+			#endif
+
 			fclose(fp);
-#ifdef DEBUG
-			fputs("adbg_proc: /proc/PID/cmdline contains known debugging tool name\n", stderr);
-#endif
-			return true;
+			return 1;
 		}
 	}
 
 	fclose(fp);
-	return false;
+	return 0;
 }
 
-// Try to detect if the current process has a tracer
-bool adbg_ptrace(void)
+// Detect SIGTRAP handling
+static void _sigtrap_handler(int sig)
+{
+	if (sig == SIGTRAP)
+		_debugger_present = 0;
+}
+
+int adbg_check_sigtrap(void)
+{
+	// Knowing that some debuggers handle SIGTRAP, if it's raised, _sigtrap_handler() should be
+	// triggered
+	_debugger_present = 1;
+	signal(SIGTRAP, _sigtrap_handler);
+
+	if (! raise(SIGTRAP) && _debugger_present) {
+		#ifdef DEBUG
+		fputs("adbg_check_sigtrap: SIGTRAP is being handled\n", stderr);
+		#endif
+
+		signal(SIGTRAP, SIG_DFL);
+		return 1;
+	}
+
+	signal(SIGTRAP, SIG_DFL);
+	return 0;
+}
+
+// Check if the current process has a tracer
+int adbg_check_ptrace(void)
 {
 	// If this process cannot be traced, it already has a tracer
 	if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0) {
-#ifdef DEBUG
-		fputs("adbg_ptrace: process has a tracer\n", stderr);
-#endif
-		return true;
+		#ifdef DEBUG
+		fputs("adbg_check_ptrace: process has a tracer\n", stderr);
+		#endif
+
+		return 1;
 	}
 
 	// If the first call returned 0, the second should return -1 unless libc
 	// was messed with (such as with LD_PRELOAD)
 	if (! ptrace(PTRACE_TRACEME, 0, NULL, NULL)) {
-#ifdef DEBUG
-		fputs("adbg_ptrace: possible ptrace implementation intercepting legitimate call\n", stderr);
-#endif
-		return true;
+		#ifdef DEBUG
+		fputs("adbg_check_ptrace: custom ptrace detected\n", stderr);
+		#endif
+
+		return 1;
 	}
 
-	return false;
+	return 0;
 }
 
 // Wrapper for all functions above
-bool adbg_all(void)
+int adbg_check_all(void)
 {
 	return (
-		adbg_env() || adbg_gdb() || adbg_proc() || adbg_ptrace()
+		adbg_check_ldpreload() ||
+		adbg_check_gdb()       ||
+		adbg_check_parent()    ||
+		adbg_check_sigtrap()   ||
+		adbg_check_ptrace()
 	);
 }

@@ -2,5 +2,5 @@
 
 int main(void)
 {
-	return adbg_all();
+	return adbg_check_all();
 }
